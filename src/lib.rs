@@ -45,7 +45,10 @@ use chrono::Duration;
 
 use std::ffi::CString;
 use std::path::Path;
-use libc::c_char;
+use libc::{c_char, c_int, c_void};
+
+use std::fs::File;
+use std::io::Write;
 
 extern crate glob;
 
@@ -400,6 +403,59 @@ impl <'a> Data<'a> {
     }
 }
 
+pub struct ms_input {
+    filename: CString,
+    pmsfp: *mut MSFileParam,
+}
+
+impl ms_input {
+    pub fn open<S: AsRef<Path>>(file: S) -> ms_input {
+        let sfile : String = file.as_ref().to_string_lossy().into_owned();
+        let cfile = CString::new(sfile).unwrap();
+        return ms_input {
+            filename: cfile,
+            pmsfp: std::ptr::null_mut() as *mut MSFileParam,
+        }
+    }
+}
+
+impl Iterator for ms_input {
+    type Item = ms_record;
+    fn next(&mut self) -> Option<ms_record> {
+        return ms_record::read_next(&self.filename, &mut self.pmsfp);
+    }
+}
+
+pub struct ms_output {
+    file: File,
+}
+
+unsafe extern "C" fn pack_handler_wrapper(buffer: *mut c_char, buflen: c_int, ptr: *mut c_void) {
+    let optr: *mut ms_output = ptr as *mut ms_output;
+    if let Some(o) = optr.as_mut() {
+        let chars: &[c_char] = std::slice::from_raw_parts(buffer, buflen as usize);
+        let bytes = &*(chars as *const [i8] as *const [u8]);
+        o.file.write(bytes as &[u8]).unwrap();
+    } else {
+        println!("optr was null");
+    }
+}
+
+impl ms_output {
+    pub fn open<S: AsRef<Path>>(filename: S) -> std::io::Result<ms_output> {
+        return File::create(filename).map(|fh| ms_output {file: fh})
+    }
+
+    pub fn write(&mut self, record: &ms_record) {
+        let ptr = (self as *mut ms_output) as *mut c_void;
+        let rec_ptr: *const MSRecord = &(record.ptr());
+        let rec_mut_ptr: *mut MSRecord = rec_ptr as *mut MSRecord_s;
+        unsafe {
+            msr_pack(rec_mut_ptr, Some(pack_handler_wrapper), ptr,
+                     std::ptr::null_mut(), 1, 0);
+        }
+    }
+}
 
 impl ms_record {
     /// Get pointer to wrapped MSRecord value
@@ -425,16 +481,22 @@ impl ms_record {
         let sfile : String = file.as_ref().to_string_lossy().into_owned();
         let cfile = CString::new(sfile).unwrap();
 
+        let mut pmsfp = std::ptr::null_mut() as *mut MSFileParam;
+        return ms_record::read_next(&cfile, &mut pmsfp).unwrap();
+    }
+
+    pub fn read_next(file: &CString, pmsfp: &mut *mut MSFileParam) -> Option<ms_record>
+    {
         let verbose     : flag = 1;
         let dataflag    : flag = 1;
         let skipnotdata : flag = 1;
         let mut pmsr = ms_record::null();
-        let mut pmsfp = std::ptr::null_mut() as *mut MSFileParam;
-        let retcode = unsafe{
+
+        let retcode = unsafe {
             // WTF: https://github.com/rust-lang/rust/issues/17417
-            ms_readmsr_r ( ((&mut pmsfp) as *mut _) as *mut *mut MSFileParam,
+            ms_readmsr_r ( ((pmsfp) as *mut _) as *mut *mut MSFileParam,
                               ((&mut pmsr) as *mut _) as *mut *mut MSRecord,
-                              cfile.as_ptr(),
+                              file.as_ptr(),
                               0,
                               std::ptr::null_mut(), // fpos
                               std::ptr::null_mut(), // last
@@ -442,11 +504,14 @@ impl ms_record {
                               dataflag,
                               verbose)
         };
-        if retcode != MS_NOERROR as i32 {
-            println!("retcode: {}", retcode);
-        }
-        ms_record ( pmsr )
 
+        if retcode == MS_NOERROR as i32 {
+            return Some(ms_record(pmsr));
+        } else if retcode == MS_ENDOFFILE as i32 {
+            return None
+        } else {
+            panic!("readmsr_r retcode: {}", retcode)
+        }
     }
     /// Return the MiniSEED Record FSDH Header,
     ///   this is typically used internally
