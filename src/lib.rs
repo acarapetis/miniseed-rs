@@ -526,6 +526,32 @@ impl ms_record {
         let m = self.ptr();
         unsafe { * (m.fsdh as *mut fsdh_s) as  fsdh_s }
     }
+
+    /// Return the network code
+    pub fn network(&self) -> String {
+        i8_to_string(&self.header().network)
+    }
+
+    /// Return the station code
+    pub fn station(&self) -> String {
+        i8_to_string(&self.header().station)
+    }
+
+    /// Return the location code
+    pub fn location(&self) -> String {
+        i8_to_string(&self.header().location)
+    }
+
+    /// Return the channel code
+    pub fn channel(&self) -> String {
+        i8_to_string(&self.header().channel)
+    }
+
+    /// Return the data quality code
+    pub fn dataquality(&self) -> String {
+        i8_to_string(&[self.header().dataquality])
+    }
+
     /// Return the start time
     ///
     /// ```
