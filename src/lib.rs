@@ -404,7 +404,7 @@ impl <'a> Data<'a> {
 }
 
 pub struct ms_input {
-    filename: CString,
+    _filename: CString,
     pmsfp: *mut MSFileParam,
 }
 
@@ -413,16 +413,20 @@ impl ms_input {
         let sfile : String = file.as_ref().to_string_lossy().into_owned();
         let cfile = CString::new(sfile).unwrap();
         return ms_input {
-            filename: cfile,
+            _filename: cfile,
             pmsfp: std::ptr::null_mut() as *mut MSFileParam,
         }
+    }
+
+    pub fn filename(&self) -> &str {
+        return self._filename.to_str().unwrap()
     }
 }
 
 impl Iterator for ms_input {
     type Item = ms_record;
     fn next(&mut self) -> Option<ms_record> {
-        return ms_record::read_next(&self.filename, &mut self.pmsfp);
+        return ms_record::read_next(&self._filename, &mut self.pmsfp);
     }
 }
 
